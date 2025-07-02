@@ -1,38 +1,21 @@
-use std::env;
-use std::fs::File;
-use std::io::{self, Read};
+use std::io::{self};
 use std::collections::HashMap;
 
 mod HuffmanObjects;
-use crate::HuffmanObjects::HuffmanObjects::HuffmanTree;
+use crate::HuffmanObjects::huffman_encoding;
+use crate::HuffmanObjects::huffman_decoding;
 
-mod EnvHandling;
-use crate::EnvHandling::EnvHandling::obtain_vocabulary;
-use crate::EnvHandling::EnvHandling::obtain_frequencies;
-use crate::EnvHandling::EnvHandling::check_entry;
-use crate::EnvHandling::EnvHandling::write_encoded_file;
-
-fn exec_huffman(filepath: &String)
-{
-    let vocabulary: Vec<u8> = obtain_vocabulary(filepath);
-    let frequencies: HashMap<u8, usize> = obtain_frequencies(&vocabulary);
-
-    for (key, value) in &frequencies { println!("Byte {:08b} has {} appearances", key, value) };
-
-    let mut freqTree: HuffmanTree = HuffmanTree::build_from_frequencies(&frequencies);
-
-    let encoded_data: Vec<u8> = freqTree.encode_data(&vocabulary);
-
-    write_encoded_file(filepath, )
-}
+pub mod EnvHandling;
 
 fn main() -> io::Result<()>
 {
-    match check_entry()
+    match EnvHandling::check_entry()
     {
-        Some(filepath) => 
+        Some((mode, filepath)) => 
         {
-            exec_huffman(&filepath);
+            if mode == "-e" { huffman_encoding(&filepath); }
+            else if mode == "-d" { huffman_decoding(&filepath); }
+            else { std::process::exit(1); }
             return Ok(());
         }
         None => 
