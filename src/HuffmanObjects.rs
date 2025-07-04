@@ -1,6 +1,4 @@
-
 use std::collections::BinaryHeap;
-use std::collections::HashMap;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -11,24 +9,29 @@ use crate::EnvHandling::write_encoded_file;
 use crate::EnvHandling::read_encoded_file;
 use crate::EnvHandling::write_decoded_file;
 
+use crate::DetHashMap;
+
 pub fn huffman_encoding(filepath: &str)
 {
     let vocabulary: Vec<u8> = obtain_vocabulary(filepath);
     let original_len = vocabulary.len();
-    let frequencies: HashMap<u8, usize> = obtain_frequencies(&vocabulary);
+    let frequencies: DetHashMap<u8, usize> = obtain_frequencies(&vocabulary);
     let mut freqTree: HuffmanTree = HuffmanTree::build_from_frequencies(&frequencies);
-    let encoded_data: Vec<u8> = freqTree.encode_data(&vocabulary);
-    write_encoded_file(filepath, &frequencies, &encoded_data, original_len);
+    let (codes, encoded_data) = freqTree.encode_data(&vocabulary);
+    match write_encoded_file(filepath, &codes, &encoded_data, original_len)
+    {
+        Ok(full_path) => { println!("File coded and saved at {}.", full_path); }
+        Err(e) => { eprintln!("Coded content could not be saved due to an error: {}", e); }
+    }
 }
 
 pub fn huffman_decoding(filepath: &str)
 {
     match read_encoded_file(filepath)
     {
-        Ok((freqs, encoded, original_len)) =>
+        Ok((codes, encoded_data, original_len)) =>
         {
-            let freqTree: HuffmanTree = HuffmanTree::build_from_frequencies(&freqs);
-            let decoded_data: Vec<u8> = freqTree.decode_data(&encoded, original_len);
+            let decoded_data: Vec<u8> = decode_data_direct(&codes, &encoded_data, original_len);
             match write_decoded_file(filepath, &decoded_data)
             {
                 Ok(()) => { println!("File decoded and saved."); }
@@ -37,6 +40,34 @@ pub fn huffman_decoding(filepath: &str)
         }
         Err(e) => { eprintln!("Error reading file: {}", e); }
     }
+}
+
+fn invert_codes(codes: &DetHashMap<u8, Vec<bool>>) -> DetHashMap<Vec<bool>, u8>
+{
+    let mut inverted: DetHashMap<Vec<bool>, u8> = DetHashMap::default();
+    for (&byte, code_bits) in codes.iter() { inverted.insert(code_bits.clone(), byte); }
+    return inverted;
+}
+
+fn decode_data_direct(codes: &DetHashMap<u8, Vec<bool>>, encoded_data: &[u8], original_len: usize) -> Vec<u8>
+{
+    let inverted: DetHashMap<Vec<bool>, u8> = invert_codes(codes);
+    let bits = bits_from_bytes(encoded_data);
+    let mut result: Vec<u8> = Vec::with_capacity(original_len);
+    let mut buffer: Vec<bool> = Vec::new();
+
+    for bit in bits
+    {
+        buffer.push(bit);
+        if let Some(&byte) = inverted.get(&buffer)
+        {
+            result.push(byte);
+            buffer.clear();
+            if result.len() == original_len { break; }
+        }
+    }
+
+    return result;
 }
 
 fn bits_from_bytes(bytes_list: &[u8]) -> Vec<bool> 
@@ -130,7 +161,7 @@ impl PartialOrd for HuffmanTreeItem
 
 impl HuffmanTree
 {
-    pub fn build_from_frequencies(frequencies: &HashMap<u8, usize>) -> Self 
+    pub fn build_from_frequencies(frequencies: &DetHashMap<u8, usize>) -> Self 
     {
         let mut tree = HuffmanTree{ root: None, tree: BinaryHeap::<HuffmanTreeItem>::new(), nodes: Vec::<Box<HuffmanNode>>::new(), };
 
@@ -166,15 +197,14 @@ impl HuffmanTree
         
         let HuffmanTreeItem(_freq, root_node) = tree.tree.pop().unwrap();
         tree.root = Some(root_node);
-
         return tree;
     }
 
-    fn generate_codes(&self) -> HashMap<u8, Vec<bool>> 
+    fn generate_codes(&self) -> DetHashMap<u8, Vec<bool>> 
     {
-        let mut codes = HashMap::new();
+        let mut codes = DetHashMap::default();
 
-        fn traverse(node: &HuffmanNode, prefix: Vec<bool>, codes: &mut HashMap<u8, Vec<bool>>) 
+        fn traverse(node: &HuffmanNode, prefix: Vec<bool>, codes: &mut DetHashMap<u8, Vec<bool>>) 
         {
             match node 
             {
@@ -193,14 +223,14 @@ impl HuffmanTree
         }
 
         if let Some(root) = &self.root { traverse(root, Vec::new(), &mut codes); }
+        else { eprintln!("Error: root does not exist, so codes cannot be generated."); }
 
         return codes;
     }
 
-    pub fn encode_data(&self, vocabulary: &Vec<u8>) -> Vec<u8> 
+    pub fn encode_data(&self, vocabulary: &Vec<u8>) -> (DetHashMap<u8, Vec<bool>>, Vec<u8>) 
     {
-        let codes: HashMap<u8, Vec<bool>> = self.generate_codes();
-
+        let codes: DetHashMap<u8, Vec<bool>> = self.generate_codes();
         let mut bit_buffer: Vec<bool> = Vec::new();
 
         // 1. For each file's byte, overwrittes the original byte with its corresponding code (sequence of bits, Variable Length Coding)
@@ -215,7 +245,7 @@ impl HuffmanTree
         // It is not possible to store sequences of bits in a file, they have to be converted into bytes (u8) previously
         let encoded_bytes = bytes_from_bits(&bit_buffer);
 
-        return encoded_bytes;
+        return (codes, encoded_bytes);
     }
 
     pub fn decode_data(&self, encoded: &Vec<u8>, original_len: usize) -> Vec<u8>
